@@ -420,6 +420,7 @@ AG_GST_CHECK_PLUGIN(audiovisualizers)
 AG_GST_CHECK_PLUGIN(autoconvert)
 AG_GST_CHECK_PLUGIN(bayer)
 AG_GST_CHECK_PLUGIN(camerabin2)
+AG_GST_CHECK_PLUGIN(chrisFilter)
 AG_GST_CHECK_PLUGIN(coloreffects)
 AG_GST_CHECK_PLUGIN(debugutils)
 AG_GST_CHECK_PLUGIN(dvbsuboverlay)
@@ -2604,6 +2605,7 @@ gst/audiovisualizers/Makefile
 gst/autoconvert/Makefile
 gst/bayer/Makefile
 gst/camerabin2/Makefile
+gst/chrisFilter/Makefile
 gst/coloreffects/Makefile
 gst/debugutils/Makefile
 gst/dvbsuboverlay/Makefile
@@ -2812,4 +2814,3 @@ AC_OUTPUT
 
 AG_GST_OUTPUT_PLUGINS
 ORC_OUTPUT
-
