@@ -45,7 +45,7 @@ enum
 // stamped out, they are ALWAYS pads
 // For now only support "broadcast" formats of data, ie I420 STATIC CAPs only required
 // TODO (later) - add the support for a 4:2:2 format and a 10bit as a nod to the Main10 HEVC standard
-// This blob is just a simple 1 in ->-> 1 out pin entity 
+// This blob is just a simple 1 in ->-> 1 out pin entity
 
 static GstStaticPadTemplate gst_chrisFilter_src_template =
 GST_STATIC_PAD_TEMPLATE ("src",

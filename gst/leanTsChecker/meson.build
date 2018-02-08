@@ -1,0 +1,12 @@
+leanTsChecker_sources = [
+  'gstleanTsChecker.c',
+]
+
+gstleanTsChecker = library('gstleanTsChecker',
+  leanTsChecker_sources,
+  c_args : gst_plugins_bad_args,
+  include_directories : [configinc],
+  dependencies : [gstbase_dep, gstvideo_dep],
+  install : true,
+  install_dir : plugins_install_dir,
+)
