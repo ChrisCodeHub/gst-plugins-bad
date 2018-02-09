@@ -31,10 +31,10 @@
 
 enum
 {
-  PROP_0,
-  PROP_ACTIVE,
-  PROP_PID_TO_TRACK
+  PROP_PID_TO_TRACK = 1,
+  N_PROPERTIES
 };
+static GParamSpec *obj_properties[N_PROPERTIES] = { NULL, };
 
 
 // need to define the input and the output pads.  Sink is the output
@@ -95,14 +95,29 @@ gst_leanTsChecker_class_init (GstleanTsCheckerClass * klass)
   gobject_class->set_property = gst_leanTsChecker_set_property;
   gobject_class->get_property = gst_leanTsChecker_get_property;
 
+#if 1
+  // GOBject STUFF
+
+  obj_properties[PROP_PID_TO_TRACK] =
+      g_param_spec_uint ("pid_to_track",
+      "pid to track", "The PID to follow in the stream", 0 /* minimum value */ ,
+      8192 /* maximum value */ ,
+      0 /* default value */ ,
+      G_PARAM_READWRITE);
+
+  g_object_class_install_properties (G_OBJECT_CLASS (klass),
+      N_PROPERTIES, obj_properties);
+#endif
+
+#if 0
   g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_ACTIVE,
       g_param_spec_boolean ("active", "active",
           "process stream", TRUE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_PID_TO_TRACK,
-      g_param_spec_boolean ("target_pid", "target_pid", "pid_to_track",
-          TRUE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
+      g_param_spec_int ("target_pid", "target_pid", "pid_to_track",
+          G_MININT, G_MAXINT, 0, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+#endif
   // lets get the pads connected
   gst_element_class_add_static_pad_template (gstelement_class,
       &gst_leanTsChecker_sink_template);
@@ -111,8 +126,8 @@ gst_leanTsChecker_class_init (GstleanTsCheckerClass * klass)
 
 
   gst_element_class_set_static_metadata (gstelement_class, "Chris leanTSChecker",       // long english name for functionality
-      "parser",                 //type of element
-      "basic parser on an Mpeg Transport Stream",       //purpose
+      "parser",                 // type of element
+      "basic parser on an Mpeg Transport Stream",       // purpose
       "Chris <ChrisCodeHub@hotmail.com>");      // author email
 
 }
@@ -139,11 +154,11 @@ gst_leanTsChecker_init (GstleanTsChecker * leanTsChecker)
   // Pads need to handle "events" such as EOS, configure callback function
   gst_pad_set_event_function (leanTsChecker->sinkpad,
       gst_leanTsChecker_sink_event);
+  gst_pad_set_event_function (leanTsChecker->srcpad,
+      gst_leanTsChecker_sink_event);
 
   // configure chain function on the pad before adding the pad to the element
   gst_pad_set_chain_function (leanTsChecker->sinkpad, gst_my_filter_chain);
-  gst_pad_set_chain_function (leanTsChecker->srcpad, gst_my_filter_chain);
-
 
   // pads are configured here with gst_pad_set_*_function ()
   gst_element_add_pad (GST_ELEMENT (leanTsChecker), leanTsChecker->sinkpad);
@@ -165,8 +180,10 @@ gst_leanTsChecker_sink_event (GstPad * pad, GstObject * parent,
 
   if (pad == leanTsChecker->srcpad) {
     outboundPad = leanTsChecker->sinkpad;
+    g_print (" <<<<<<< src =====> sink >>>>>>>> \n");
   } else {
     outboundPad = leanTsChecker->srcpad;
+    g_print (" <<<<<<< sink =====> src >>>>>>>> \n");
   }
 
   switch (GST_EVENT_TYPE (event)) {
@@ -259,11 +276,8 @@ gst_leanTsChecker_set_property (GObject * object, guint prop_id,
   leanTsChecker = GST_leanTsChecker (object);
 
   switch (prop_id) {
-    case PROP_ACTIVE:
-      leanTsChecker->active = g_value_get_boolean (value);
-      break;
     case PROP_PID_TO_TRACK:
-      leanTsChecker->pidToTrack = g_value_get_int (value);
+      leanTsChecker->pidToTrack = g_value_get_uint (value);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -281,11 +295,9 @@ gst_leanTsChecker_get_property (GObject * object, guint prop_id, GValue * value,
   leanTsChecker = GST_leanTsChecker (object);
 
   switch (prop_id) {
-    case PROP_ACTIVE:
-      g_value_set_boolean (value, leanTsChecker->active);
-      break;
+
     case PROP_PID_TO_TRACK:
-      g_value_set_int (value, leanTsChecker->pidToTrack);
+      g_value_set_uint (value, leanTsChecker->pidToTrack);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
