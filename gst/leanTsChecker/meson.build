@@ -1,5 +1,6 @@
 leanTsChecker_sources = [
   'gstleanTsChecker.c',
+  'headerAndPayloads.c',
 ]
 
 gstleanTsChecker = library('gstleanTsChecker',

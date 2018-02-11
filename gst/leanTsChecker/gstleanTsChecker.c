@@ -27,25 +27,32 @@
 #include <string.h>
 #include <math.h>
 #include "gstleanTsChecker.h"
+#include "headerAndPayloads.h"
 
+
+
+
+// setup the GObject basics
 
 enum
 {
   PROP_PID_TO_TRACK = 1,
   N_PROPERTIES
 };
+
 static GParamSpec *obj_properties[N_PROPERTIES] = { NULL, };
 
-
-// need to define the input and the output pads.  Sink is the output
-// src is the input.  Since this filter can create its pads when its
-// stamped out, they are ALWAYS pads
-// For now only support "broadcast" formats of data, ie I420 STATIC CAPs only required
-// TODO (later) - add the support for a 4:2:2 format and a 10bit as a nod to the Main10 HEVC standard
-// This blob is just a simple 1 in ->-> 1 out pin entity
-
-// setup the GObject basics so that all functions will be called appropriately:
 G_DEFINE_TYPE (GstleanTsChecker, gst_leanTsChecker, GST_TYPE_ELEMENT);
+
+// add forward declarations for the boiler plate functions
+static void gst_leanTsChecker_set_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec);
+
+static void gst_leanTsChecker_get_property (GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec);
+
+static void gst_leanTsChecker_dispose (GObject * object);
+static void gst_leanTsChecker_finalize (GObject * object);
 
 
 
@@ -74,14 +81,6 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     GST_STATIC_CAPS ("ANY"));
 
 
-// add forward declarations for the boiler plate functions
-static void gst_leanTsChecker_set_property (GObject * object, guint prop_id,
-    const GValue * value, GParamSpec * pspec);
-static void gst_leanTsChecker_get_property (GObject * object, guint prop_id,
-    GValue * value, GParamSpec * pspec);
-
-
-
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // The _class_init() function, which is used to initialise the class only once
 //(specifying what signals, arguments and virtual functions the class has and
@@ -95,6 +94,9 @@ gst_leanTsChecker_class_init (GstleanTsCheckerClass * klass)
   gobject_class->set_property = gst_leanTsChecker_set_property;
   gobject_class->get_property = gst_leanTsChecker_get_property;
 
+  // Add the objects desctructors to the definition.
+  gobject_class->dispose = gst_leanTsChecker_dispose;
+  gobject_class->finalize = gst_leanTsChecker_finalize;
 #if 1
   // GOBject STUFF
 
@@ -109,15 +111,6 @@ gst_leanTsChecker_class_init (GstleanTsCheckerClass * klass)
       N_PROPERTIES, obj_properties);
 #endif
 
-#if 0
-  g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_ACTIVE,
-      g_param_spec_boolean ("active", "active",
-          "process stream", TRUE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
-  g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_PID_TO_TRACK,
-      g_param_spec_int ("target_pid", "target_pid", "pid_to_track",
-          G_MININT, G_MAXINT, 0, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-#endif
   // lets get the pads connected
   gst_element_class_add_static_pad_template (gstelement_class,
       &gst_leanTsChecker_sink_template);
@@ -132,8 +125,9 @@ gst_leanTsChecker_class_init (GstleanTsCheckerClass * klass)
 
 }
 
-// initialise the variables to sensible defaultws
- // the _init() function, which is used to initialise a specific instance of this type.
+//##############################################################################
+// ## initialise the variables to sensible defaults the _init() function,
+//## which is used to initialise a specific instance of this type.
 static void
 gst_leanTsChecker_init (GstleanTsChecker * leanTsChecker)
 {
@@ -143,6 +137,11 @@ gst_leanTsChecker_init (GstleanTsChecker * leanTsChecker)
   leanTsChecker->totalCalls = 0;
   leanTsChecker->TotalBytesPassed = 0;
   leanTsChecker->pidToTrack = 0x123;
+
+  leanTsChecker->pheaderAndPayloadStore = TS_levelParserInit ();
+
+  // Make an adapter - this allows the arkward GstBuffer size to be handled
+  leanTsChecker->adapter = gst_adapter_new ();
 
   /* pad through which data comes in to the element */
   leanTsChecker->sinkpad =
@@ -165,6 +164,32 @@ gst_leanTsChecker_init (GstleanTsChecker * leanTsChecker)
   gst_element_add_pad (GST_ELEMENT (leanTsChecker), leanTsChecker->srcpad);
 }
 
+
+//#############################################################################
+//##
+//##
+//##
+//##
+static void
+gst_leanTsChecker_dispose (GObject * object)
+{
+  GstleanTsChecker *leanTsChecker = GST_leanTsChecker (object);
+  TS_levelParserDispose (leanTsChecker->pheaderAndPayloadStore);
+
+// Chain up the parent class dispose function to have a clean exit
+  if (G_OBJECT_CLASS (gst_leanTsChecker_parent_class)->dispose) {
+    G_OBJECT_CLASS (gst_leanTsChecker_parent_class)->dispose (object);
+  }
+}
+
+static void
+gst_leanTsChecker_finalize (GObject * object)
+{
+  // Chain up the parent class finalize function to have a clean exit
+  if (G_OBJECT_CLASS (gst_leanTsChecker_parent_class)->finalize) {
+    G_OBJECT_CLASS (gst_leanTsChecker_parent_class)->finalize (object);
+  }
+}
 
 //#############################################################################
 //##
@@ -215,13 +240,20 @@ gst_leanTsChecker_sink_event (GstPad * pad, GstObject * parent,
 
 
 //#############################################################################
+//## This is what gets called to "do stuff" as data flows through the blob
 //##
-//##
+// NOTE: The chain function uses a "GstAdapter *adapter"
+// This allows us to push into the adapter teh GstBuffers as they arrive, which
+// are an arkward size, and just read out the data as and when we need it
+// The act of puching the buffer into the adapter takes ownership, which
+// needs freeing before onwards transmisson (I think!)
 
 static GstFlowReturn
 gst_my_filter_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
 {
   GstleanTsChecker *leanTsChecker = GST_leanTsChecker (parent);
+
+  gst_adapter_push (leanTsChecker->adapter, buf);
 
   if (!leanTsChecker->silent)
     g_print ("Have data of size %" G_GSIZE_FORMAT " bytes!\n",

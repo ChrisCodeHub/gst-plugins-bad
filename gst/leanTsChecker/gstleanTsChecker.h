@@ -25,6 +25,9 @@
 
 #include <stdint.h>
 #include <gst/gst.h>
+#include <gst/base/gstadapter.h>
+#include "headerAndPayloads.h"
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,6 +46,9 @@ struct _GstleanTsChecker {
   gboolean active;
   uint16_t pidToTrack;
 
+  headerAndPayloadStore *pheaderAndPayloadStore;
+
+  GstAdapter *adapter;
   GstPad *sinkpad;
   GstPad *srcpad;
 };
