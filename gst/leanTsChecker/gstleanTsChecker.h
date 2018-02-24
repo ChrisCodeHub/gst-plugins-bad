@@ -42,13 +42,12 @@ struct _GstleanTsChecker {
 
   uint32_t totalCalls;
   uint64_t TotalBytesPassed;
+  int64_t startTime;
   gboolean silent;
   gboolean active;
   uint16_t pidToTrack;
 
   headerAndPayloadStore *pheaderAndPayloadStore;
-
-  GstAdapter *adapter;
   GstPad *sinkpad;
   GstPad *srcpad;
 };

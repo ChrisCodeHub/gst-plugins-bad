@@ -28,28 +28,44 @@
   extern "C" {
   #endif /* __cplusplus */
 
+
   typedef struct _perPIDStatusInfo perPIDStatusInfo;
   typedef struct _headerAndPayloadStore headerAndPayloadStore;
 
   headerAndPayloadStore* TS_levelParserInit(void);
   void TS_levelParserDispose(headerAndPayloadStore* Store);
+  void TS_pushDataIn(headerAndPayloadStore *store, GstBuffer *buf, gboolean checkSync);
+  int TS_parseTsPacketHeader(headerAndPayloadStore *store);
+  GstBuffer* TS_getFreeDataToSendOn(headerAndPayloadStore *store);
 
   struct _perPIDStatusInfo{
     uint16_t PID;
     uint8_t  lastContinuityCount;
+    uint32_t packetsSincePCR;
+    uint32_t bitrate;
     uint64_t CCErrorsSoFar;
     uint64_t lastPCR_value;
     uint64_t lastPCRPAcketNumber_thisPID;
     uint64_t lastPCRPAcketNumber_allTS;
-    gboolean     isKnownPID;
+    uint64_t packetsOnThisPID;
+    gboolean isKnownPID;
+    gboolean haveSeenPCR;
+    gboolean haveSentDebug;
+
   };
 
 
    /*  */
    struct _headerAndPayloadStore {
 
-     perPIDStatusInfo **pPIDStats;
+     perPIDStatusInfo *pPIDStats;
+     int32_t adapterFillLevel;
      GstAdapter *adapter;
+     uint64_t TotalPacketsParsed;
+     GstClockTime startTime;
+
+     uint32_t topOfPIDStore;
+
    };
 
 

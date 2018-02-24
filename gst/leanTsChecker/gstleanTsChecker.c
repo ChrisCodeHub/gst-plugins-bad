@@ -63,7 +63,7 @@ static GstFlowReturn gst_my_filter_chain (GstPad * pad,
 static gboolean gst_leanTsChecker_sink_event (GstPad * pad,
     GstObject * parent, GstEvent * event);
 
-void gst_cutter_message_new (GstleanTsChecker * me);
+void gst_SendAStatusMessage (GstleanTsChecker * me);
 
 
 // https://developer.gnome.org/gstreamer/stable/GstPad.html
@@ -140,9 +140,6 @@ gst_leanTsChecker_init (GstleanTsChecker * leanTsChecker)
 
   leanTsChecker->pheaderAndPayloadStore = TS_levelParserInit ();
 
-  // Make an adapter - this allows the arkward GstBuffer size to be handled
-  leanTsChecker->adapter = gst_adapter_new ();
-
   /* pad through which data comes in to the element */
   leanTsChecker->sinkpad =
       gst_pad_new_from_static_template (&gst_leanTsChecker_sink_template,
@@ -174,6 +171,7 @@ static void
 gst_leanTsChecker_dispose (GObject * object)
 {
   GstleanTsChecker *leanTsChecker = GST_leanTsChecker (object);
+  gst_SendAStatusMessage (leanTsChecker);
   TS_levelParserDispose (leanTsChecker->pheaderAndPayloadStore);
 
 // Chain up the parent class dispose function to have a clean exit
@@ -242,18 +240,25 @@ gst_leanTsChecker_sink_event (GstPad * pad, GstObject * parent,
 //#############################################################################
 //## This is what gets called to "do stuff" as data flows through the blob
 //##
-// NOTE: The chain function uses a "GstAdapter *adapter"
-// This allows us to push into the adapter teh GstBuffers as they arrive, which
-// are an arkward size, and just read out the data as and when we need it
-// The act of puching the buffer into the adapter takes ownership, which
-// needs freeing before onwards transmisson (I think!)
-
 static GstFlowReturn
 gst_my_filter_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
 {
+  GstBuffer *bufferTosendOn;
   GstleanTsChecker *leanTsChecker = GST_leanTsChecker (parent);
 
-  gst_adapter_push (leanTsChecker->adapter, buf);
+  // if this is the first buffer, latch the time NOTE - could be on state change?
+  if (leanTsChecker->totalCalls == 0) {
+    leanTsChecker->startTime = g_get_monotonic_time ();
+  } else {
+    int64_t nowTime = g_get_monotonic_time ();
+    uint32_t elapsedTime =
+        (uint32_t) ((nowTime - leanTsChecker->startTime) / 1000);
+    if (leanTsChecker->totalCalls == 1000) {
+      g_print (" @@@@@@ elapsed %u \n", elapsedTime);
+    }
+
+  }
+  bufferTosendOn = buf;
 
   if (!leanTsChecker->silent)
     g_print ("Have data of size %" G_GSIZE_FORMAT " bytes!\n",
@@ -261,24 +266,46 @@ gst_my_filter_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
 
   leanTsChecker->TotalBytesPassed += gst_buffer_get_size (buf);
   leanTsChecker->totalCalls++;
-  if (leanTsChecker->totalCalls == 1) {
-    g_print ("######## ######Have data of size %" G_GSIZE_FORMAT " bytes!\n",
-        gst_buffer_get_size (buf));
 
-    gst_cutter_message_new (leanTsChecker);
+  // useful - can get GstClock for this element once its running,  Gives us
+  // pipeine time - NOTE do need to unref this after use
+  //if (leanTsChecker->totalCalls == 10)
+  //{
+  //  GstClock *clock = gst_element_get_clock(GST_ELEMENT(leanTsChecker));
+  //  if (clock) {
+  //    g_print("@@@@@@@@@@@@@@@@@@@@@@ GOT CLOCK @@@@@@@@@@@@@@@@@@@@@@@@@@");
+  //  }
+  //  gst_object_unref (clock);
+  //}
 
+  {
+    bufferTosendOn = gst_buffer_ref (buf);
+
+    // NOTE : ownership of "buf" is passed to TS_xxx by the below
+    // need to get a new handle to pass downstream modules in pipeline
+    TS_pushDataIn (leanTsChecker->pheaderAndPayloadStore, buf, TRUE);
+
+    //bufferTosendOn = TS_getFreeDataToSendOn(leanTsChecker->pheaderAndPayloadStore);
+
+    //g_print ("######## ######Have data of size %" G_GSIZE_FORMAT " bytes!\n",
+    //    gst_buffer_get_size (buf));
+
+    //gst_SendAStatusMessage (leanTsChecker);
+
+    //g_print ("Have data of size %" G_GSIZE_FORMAT " bytes!\n",
+    //    gst_buffer_get_size (bufferTosendOn));
   }
 
-  return gst_pad_push (leanTsChecker->srcpad, buf);
+  return gst_pad_push (leanTsChecker->srcpad, bufferTosendOn);
 }
 
-//static GstMessage *gst_cutter_message_new (GstleanTsChecker * c, gboolean above,
+//static GstMessage *gst_SendAStatusMessage (GstleanTsChecker * c, gboolean above,
 //    GstClockTime timestamp);
 //###########################################################################################
 // to send a message on the message bus to main application - gst_element_post_message() is what the TSparsers are doing
 // lifted this code from gst-good/cutter/cutter.c
 void
-gst_cutter_message_new (GstleanTsChecker * me)
+gst_SendAStatusMessage (GstleanTsChecker * me)
 {
   GstStructure *s;
 
@@ -286,11 +313,14 @@ gst_cutter_message_new (GstleanTsChecker * me)
 //      "above", G_TYPE_BOOLEAN, above,
 //      "timestamp", GST_TYPE_CLOCK_TIME, timestamp, NULL);
 
-  s = gst_structure_new ("leanTsChecker", "iterations ", G_TYPE_INT,
-      me->totalCalls, NULL);
+  uint64_t TotalPacketsParsed = me->pheaderAndPayloadStore->TotalPacketsParsed;
+  s = gst_structure_new ("leanTsChecker", "packetsParsed ", G_TYPE_UINT64,
+      TotalPacketsParsed, NULL);
 
   GstMessage *messageInABottle = gst_message_new_element (GST_OBJECT (me), s);
   gst_element_post_message (GST_ELEMENT (me), messageInABottle);
+
+  g_print ("<><><><>< Pkts %d  <><><< \n", (int) TotalPacketsParsed);
   return;
 }
 
