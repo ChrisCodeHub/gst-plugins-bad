@@ -59,6 +59,7 @@ TS_levelParserInit (void)
   store->topOfPIDStore = 0;
   store->TotalPacketsParsed = 0;
   store->pPIDStats = g_new (perPIDStatusInfo, maxPIDsTracked);
+  store->pSiPsiParser = siPsi_ParserInit ();
 
   for (uint32_t idx = 0; idx < maxPIDsTracked; idx++) {
     store->pPIDStats[idx].haveSeenPCR = FALSE;
@@ -78,6 +79,7 @@ void
 TS_levelParserDispose (headerAndPayloadStore * store)
 {
   g_print (" <<<<<< Diposed the TS_parserStage >>>>>> \n");
+  siPsi_ParserDispose (store->pSiPsiParser);
 
   g_object_unref (store->adapter);
   g_free (store->pPIDStats);
@@ -91,6 +93,7 @@ TS_levelParserDispose (headerAndPayloadStore * store)
 int
 TS_parseTsPacketHeader (headerAndPayloadStore * store)
 {
+  gboolean isTable;
   // check that the first byte is a 0x47
   // get the PID
   // adaptation fields to see if there is a PCR present
@@ -98,18 +101,19 @@ TS_parseTsPacketHeader (headerAndPayloadStore * store)
 
   while (store->adapterFillLevel >= 188) {
     // get access to the data in the adapter store
-    const guint8 *inputData = gst_adapter_map (store->adapter, 32);
+    const guint8 *inputData = gst_adapter_map (store->adapter, 184);
+
     if (*inputData++ != 0x47) {
       g_print ("\n\n ############   LOST SYNC ################### \n\n");
       return BAD_TS_SYNC;
     }
 
-
+    uint8_t PUSI = (*inputData >> 6) & 1;
     uint16_t PID = GST_READ_UINT16_BE (inputData) & 0x1FFF;
     inputData += 2;
 
     uint8_t CCcount = *inputData & 0x0f;
-    uint8_t adaptationFieldFlags = *inputData & 0x30;
+    uint8_t afFlags = *inputData & 0x30;
     inputData++;
 
 
@@ -136,12 +140,11 @@ TS_parseTsPacketHeader (headerAndPayloadStore * store)
       uint16_t expectedContiuityCount;
       expectedContiuityCount =
           store->pPIDStats[activeIndex].lastContinuityCount;
-      if ((adaptationFieldFlags & 0x30) != 0x30) {
+      if ((afFlags & 0x30) != 0x30) {
         expectedContiuityCount = (expectedContiuityCount + 1) & 0xf;
         if (expectedContiuityCount != CCcount) {
           store->pPIDStats[activeIndex].CCErrorsSoFar++;
           //  g_print("<><><> CC ERROR on PID 0x%x ><><><>\n", store->pPIDStats[activeIndex].PID);
-
         }
       }
       store->pPIDStats[activeIndex].lastContinuityCount = CCcount;
@@ -150,61 +153,70 @@ TS_parseTsPacketHeader (headerAndPayloadStore * store)
 
     store->pPIDStats[activeIndex].packetsSincePCR++;
 
-    // adaptation field bits signify if there is payload only, padding or a
-    // mix of the two.  If top bit (of two bits) is set then we need to check
-    // what info is present
+    isTable =
+        siPsi_IsTable (afFlags, store->pSiPsiParser, PID, inputData, PUSI);
 
-    if ((adaptationFieldFlags & 0x20) == 0x20) {
-      uint8_t adaptationLength = *inputData++;
-      if (adaptationLength != 0) {
-        uint8_t pcrFlag = (*inputData++) & 0x10;
-        if (pcrFlag) {
-          uint64_t PCR_top33Bits;
-          uint32_t PCR_bottom9Bits;
-          uint64_t fullPCR_27Mhz;
-          PCR_top33Bits = (inputData[0] << 25) +
-              (inputData[1] << 17) +
-              (inputData[2] << 9) +
-              (inputData[3] << 1) + ((inputData[4] >> 7) & 1);
+    if (isTable == FALSE) {
+      // adaptation field bits signify if there is payload only, padding or a
+      // mix of the two.  If top bit (of two bits) is set then we need to check
+      // what info is present
 
-          PCR_top33Bits = (inputData[0] << 24) + (inputData[1] << 16) +
-              (inputData[2] << 8) + (inputData[3]);
-          PCR_top33Bits *= (double) 2;
-          PCR_top33Bits += ((inputData[4] >> 7) & 1);
-          PCR_bottom9Bits = ((inputData[4] & 1) << 8) + (inputData[5]);
-          fullPCR_27Mhz = (PCR_top33Bits * (double) 300) + PCR_bottom9Bits;
+      if ((afFlags & 0x20) == 0x20) {
+        uint8_t adaptationLength = *inputData++;
+        if (adaptationLength != 0) {
+          uint8_t pcrFlag = (*inputData++) & 0x10;
+          if (pcrFlag) {
+            uint64_t PCR_top33Bits;
+            uint32_t PCR_bottom9Bits;
+            uint64_t fullPCR_27Mhz;
+            PCR_top33Bits = (inputData[0] << 25) +
+                (inputData[1] << 17) +
+                (inputData[2] << 9) +
+                (inputData[3] << 1) + ((inputData[4] >> 7) & 1);
 
-          if (store->pPIDStats[activeIndex].haveSeenPCR == FALSE) {
-            store->pPIDStats[activeIndex].haveSeenPCR = TRUE;
-            store->pPIDStats[activeIndex].packetsSincePCR = 0;
-          } else {
-            // seen a PCR before so we can work out a bitrate -
-            // bits/sec is (packets * 8 * 188)*27000000 / deltaPCR
-            uint64_t deltaPCR;
-            uint64_t packets;
-            uint32_t bitrate;
-            uint64_t previousPCR = store->pPIDStats[activeIndex].lastPCR_value;
-            if (previousPCR >= fullPCR_27Mhz) {
-              deltaPCR = (double) 0x1ffffffff - previousPCR;
-              deltaPCR = deltaPCR + fullPCR_27Mhz;
+            PCR_top33Bits = (inputData[0] << 24) + (inputData[1] << 16) +
+                (inputData[2] << 8) + (inputData[3]);
+            PCR_top33Bits *= (double) 2;
+            PCR_top33Bits += ((inputData[4] >> 7) & 1);
+            PCR_bottom9Bits = ((inputData[4] & 1) << 8) + (inputData[5]);
+            fullPCR_27Mhz = (PCR_top33Bits * (double) 300) + PCR_bottom9Bits;
+
+            if (store->pPIDStats[activeIndex].haveSeenPCR == FALSE) {
+              store->pPIDStats[activeIndex].haveSeenPCR = TRUE;
+              store->pPIDStats[activeIndex].packetsSincePCR = 0;
             } else {
-              deltaPCR = fullPCR_27Mhz - previousPCR;
-            }
+              // seen a PCR before so we can work out a bitrate -
+              // bits/sec is (packets * 8 * 188)*27000000 / deltaPCR
+              uint64_t deltaPCR;
+              uint64_t packets;
+              uint32_t bitrate;
+              uint64_t previousPCR =
+                  store->pPIDStats[activeIndex].lastPCR_value;
+              if (previousPCR >= fullPCR_27Mhz) {
+                deltaPCR = (double) 0x1ffffffff - previousPCR;
+                deltaPCR = deltaPCR + fullPCR_27Mhz;
+              } else {
+                deltaPCR = fullPCR_27Mhz - previousPCR;
+              }
 
-            packets = store->pPIDStats[activeIndex].packetsSincePCR;
-            uint64_t multipler = (double) 8 * (double) 188 * (double) 27000000;
-            bitrate = (uint32_t) ((packets * multipler) / deltaPCR);
-            store->pPIDStats[activeIndex].bitrate = bitrate;
-            if (store->pPIDStats[activeIndex].haveSentDebug == FALSE) {
-              store->pPIDStats[activeIndex].haveSentDebug = TRUE;
-              g_print (" PID 0x%x   bitrate %d   %d \n",
-                  store->pPIDStats[activeIndex].PID,
-                  store->pPIDStats[activeIndex].bitrate, (uint32_t) packets);
+              packets = store->pPIDStats[activeIndex].packetsSincePCR;
+              uint64_t multipler =
+                  (double) 8 * (double) 188 * (double) 27000000;
+              bitrate = (uint32_t) ((packets * multipler) / deltaPCR);
+              store->pPIDStats[activeIndex].bitrate = bitrate;
 
+              //if (store->pPIDStats[activeIndex].haveSentDebug == FALSE) {
+              //  store->pPIDStats[activeIndex].haveSentDebug = TRUE;
+              //  g_print (" PID 0x%x   bitrate %d   packtes %d  CCerr %d\n",
+              //      store->pPIDStats[activeIndex].PID,
+              //      store->pPIDStats[activeIndex].bitrate,
+              //      (uint32_t) packets,
+              //      (uint32_t)store->pPIDStats[activeIndex].CCErrorsSoFar);
+              //}
             }
+            store->pPIDStats[activeIndex].lastPCR_value = fullPCR_27Mhz;
+            store->pPIDStats[activeIndex].packetsSincePCR = 0;
           }
-          store->pPIDStats[activeIndex].lastPCR_value = fullPCR_27Mhz;
-          store->pPIDStats[activeIndex].packetsSincePCR = 0;
         }
       }
     }
@@ -234,16 +246,4 @@ TS_pushDataIn (headerAndPayloadStore * store, GstBuffer * buf,
     TS_parseTsPacketHeader (store);
   }
 
-}
-
-GstBuffer *
-TS_getFreeDataToSendOn (headerAndPayloadStore * store)
-{
-  gsize nbytes;
-
-  nbytes = gst_adapter_available_fast (store->adapter);
-  //g_print ("<><> PUSH ON Have data of size %" G_GSIZE_FORMAT " bytes!\n", nbytes);
-
-  store->adapterFillLevel -= nbytes;
-  return gst_adapter_take_buffer (store->adapter, nbytes);
 }

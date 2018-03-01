@@ -23,6 +23,7 @@
   #include <stdint.h>
   #include <gst/gst.h>
   #include <gst/base/gstadapter.h>
+  #include "siPsi.h"
 
   #ifdef __cplusplus
   extern "C" {
@@ -36,7 +37,6 @@
   void TS_levelParserDispose(headerAndPayloadStore* Store);
   void TS_pushDataIn(headerAndPayloadStore *store, GstBuffer *buf, gboolean checkSync);
   int TS_parseTsPacketHeader(headerAndPayloadStore *store);
-  GstBuffer* TS_getFreeDataToSendOn(headerAndPayloadStore *store);
 
   struct _perPIDStatusInfo{
     uint16_t PID;
@@ -57,11 +57,11 @@
 
    /*  */
    struct _headerAndPayloadStore {
-
-     perPIDStatusInfo *pPIDStats;
      int32_t adapterFillLevel;
-     GstAdapter *adapter;
      uint64_t TotalPacketsParsed;
+     perPIDStatusInfo *pPIDStats;
+     siPsi_TableHandler *pSiPsiParser;
+     GstAdapter *adapter;
      GstClockTime startTime;
 
      uint32_t topOfPIDStore;

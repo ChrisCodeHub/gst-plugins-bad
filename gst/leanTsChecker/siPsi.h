@@ -22,17 +22,25 @@
 
   #include <stdint.h>
   #include <gst/gst.h>
-  #include <gst/base/gstadapter.h>
 
   #ifdef __cplusplus
   extern "C" {
   #endif /* __cplusplus */
 
+ // from Table 2-31 – table_id assignment values in
+ // the mpeg systems spec
+  typedef enum
+  {
+    program_association_section = 0,
+    TS_program_map_section = 2
+  } eTableIDs;
+
   typedef enum
   {
     PAT_TABLE = 1,
     PMT_TABLE,
-    SDT_TABLE
+    SDT_TABLE,
+    NIT_TABLE
   } esiPsi_TableType;
 
   typedef enum
@@ -53,18 +61,42 @@ typedef enum
 
   typedef struct _siPsi_TableHandler siPsi_TableHandler;
   typedef struct _siPsi_isKnownPID siPsi_isKnownPID;
+  typedef struct _siPMT_Streams PMT_Streams;
+  typedef struct _ProgramDef ProgramDef;
+  typedef struct _siPsi_ServiceList siPsi_ServiceList;
 
   siPsi_TableHandler *siPsi_ParserInit (void);
   void siPsi_ParserDispose (siPsi_TableHandler * handler);
+  gboolean siPsi_IsTable (uint8_t afFlags, siPsi_TableHandler * handler,
+    uint16_t packetPID, const uint8_t * payloadData, uint8_t PUSI);
 
-
-  struct _siPsi_TableHandler{
-    GstAdapter *adapter;
-    uint16_t trackedPIDsLength;
-    uint16_t trackedPIDsMax;
-    siPsi_isKnownPID *trackedPIDs;
+  struct _siPsi_ServiceList{
+    uint16_t numberOfPrograms;
+    uint16_t maxNumberOfPrograms;
+    ProgramDef *programList;
   };
 
+  struct _ProgramDef{
+    uint16_t programNumber;
+    char*    serviceName;
+    int16_t  pcrPID;
+    uint16_t numberOfStreams;
+    uint16_t maxNumberOfStreams;
+    PMT_Streams *streamdef;
+  };
+
+  struct _siPMT_Streams{
+    uint8_t streamType;
+    uint16_t streamPID;
+  };
+
+  struct _siPsi_TableHandler{
+    uint16_t trackedPIDsLength;
+    uint16_t trackedPIDsMax;
+    uint16_t shownDebug;
+    siPsi_isKnownPID *trackedPIDs;
+    siPsi_ServiceList* serviceList;
+  };
 
   struct _siPsi_isKnownPID
   {
@@ -73,6 +105,7 @@ typedef enum
     uint8_t version_number;
     uint8_t table_id;
     uint16_t PID;
+    uint16_t programNumber;
     uint16_t section_length;
     uint16_t CurrentLength;
     uint8_t* tableBody;
