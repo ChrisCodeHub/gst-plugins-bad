@@ -31,8 +31,9 @@
  // the mpeg systems spec
   typedef enum
   {
-    program_association_section = 0,
-    TS_program_map_section = 2
+    program_association_section = 0x00,
+    TS_program_map_section = 0x02,
+    SDT_section_actual_transport_stream = 0x42
   } eTableIDs;
 
   typedef enum
@@ -93,6 +94,7 @@ typedef enum
   struct _siPsi_TableHandler{
     uint16_t trackedPIDsLength;
     uint16_t trackedPIDsMax;
+    uint16_t fixedPIDs;
     uint16_t shownDebug;
     siPsi_isKnownPID *trackedPIDs;
     siPsi_ServiceList* serviceList;
