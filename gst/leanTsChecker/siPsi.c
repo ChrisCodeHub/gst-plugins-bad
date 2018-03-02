@@ -23,7 +23,7 @@
 #include <string.h>
 
 //##############################################################################
-//  Infracstructure functions
+//  Infrastructure functions
 //##############################################################################
 
 //##############################################################################
@@ -35,6 +35,12 @@ siPsi_ParserInit (void)
   g_print (" <<<<<< Initialised a sipsi parser >>>>>> \n");
 
   handler = g_new (siPsi_TableHandler, 1);
+  handler->numberOfPMTsFound = 0;
+  handler->numberOfPMTsToFind = 0;
+  handler->PATvalid = FALSE;
+  handler->PMTsvalid = FALSE;
+  handler->SDTvalid = FALSE;
+
 
   handler->serviceList = g_new (siPsi_ServiceList, 1);
   uint8_t maxPrograms = 32;
@@ -118,17 +124,26 @@ void
 UpdateTrackedPIDs (siPsi_TableHandler * handler)
 {
   uint16_t index = handler->fixedPIDs;
+  uint16_t numberOfPMTsToFind = 0;
   siPsi_isKnownPID *progInfo = &handler->trackedPIDs[index];
 
   for (index = handler->fixedPIDs; index < handler->trackedPIDsLength; index++) {
-    (progInfo->programNumber == 0) ? (progInfo->TableType = NIT_TABLE)
-        : (progInfo->TableType = PMT_TABLE);
-
+    if (progInfo->programNumber == 0) {
+      progInfo->TableType = NIT_TABLE;
+    } else {
+      progInfo->TableType = PMT_TABLE;
+      numberOfPMTsToFind++;
+    }
     progInfo->parserState = WAITNG_FOR_START;
     progInfo->version_number = 0xff;
     progInfo->CurrentLength = 0;
     progInfo++;
   }
+  handler->numberOfPMTsFound = 0;
+  handler->numberOfPMTsToFind = numberOfPMTsToFind;
+  handler->PATvalid = TRUE;
+  handler->PMTsvalid = FALSE;
+  handler->SDTvalid = FALSE;
 
   // if(handler->shownDebug == 0)
   // {
@@ -197,9 +212,6 @@ SDTparse (const uint8_t * data, uint32_t dataLeft, siPsi_isKnownPID * progInfo,
   data += 3;
   dataLeft -= 3;
 
-  g_print
-      (" ~~~~~~~~~~~~~~~~ NEED TO ADD SEQUENCING !!!!!!! PAT-PMT-SDT  SDT ~~~~~~~~~~~~~~~~~~ \n");
-
   siPsi_ServiceList *serviceList = handler->serviceList;
   uint16_t programsInList = serviceList->numberOfPrograms;
   char *serviceNameString;
@@ -254,6 +266,7 @@ SDTparse (const uint8_t * data, uint32_t dataLeft, siPsi_isKnownPID * progInfo,
 
   // ignore CRC (4bytes)
   DisplayServiceList (handler);
+  handler->SDTvalid = TRUE;
 }
 
 
@@ -307,6 +320,11 @@ PMTparse (const uint8_t * data, uint32_t dataLeft, siPsi_isKnownPID * progInfo,
   wrPtr++;
   if (wrPtr < serviceList->maxNumberOfPrograms) {
     serviceList->numberOfPrograms = wrPtr;
+  }
+
+  handler->numberOfPMTsFound++;
+  if (handler->numberOfPMTsFound == handler->numberOfPMTsToFind) {
+    handler->PMTsvalid = TRUE;
   }
 
   if (showDebug == TRUE) {
@@ -454,7 +472,8 @@ siPsi_IsTable (uint8_t afFlags, siPsi_TableHandler * handler,
             BytesOfPayload -= 3;
 
             if ((progInfo->TableType == SDT_TABLE) &&
-                (progInfo->table_id != 0x42)) {
+                ((progInfo->table_id != 0x42)
+                    || (handler->PMTsvalid == FALSE))) {
               progInfo->parserState = WAITNG_FOR_START;
             } else {
               if (progInfo->section_length <= BytesOfPayload) {

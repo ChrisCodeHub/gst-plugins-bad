@@ -91,15 +91,6 @@ typedef enum
     uint16_t streamPID;
   };
 
-  struct _siPsi_TableHandler{
-    uint16_t trackedPIDsLength;
-    uint16_t trackedPIDsMax;
-    uint16_t fixedPIDs;
-    uint16_t shownDebug;
-    siPsi_isKnownPID *trackedPIDs;
-    siPsi_ServiceList* serviceList;
-  };
-
   struct _siPsi_isKnownPID
   {
     esiPsi_TableType TableType;
@@ -113,6 +104,22 @@ typedef enum
     uint8_t* tableBody;
     void* TableInfo;
   };
+
+  // this structure is the main "body" of the SI/PSI parser
+  struct _siPsi_TableHandler{
+    uint16_t trackedPIDsLength;
+    uint16_t trackedPIDsMax;
+    uint16_t fixedPIDs;
+    uint16_t shownDebug;
+    uint16_t numberOfPMTsToFind;
+    uint16_t numberOfPMTsFound;
+    gboolean PATvalid;
+    gboolean PMTsvalid;
+    gboolean SDTvalid;
+    siPsi_isKnownPID *trackedPIDs;
+    siPsi_ServiceList* serviceList;
+  };
+
 
   #ifdef __cplusplus
   }
