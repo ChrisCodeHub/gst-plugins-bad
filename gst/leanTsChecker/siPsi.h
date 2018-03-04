@@ -70,6 +70,7 @@ typedef enum
   void siPsi_ParserDispose (siPsi_TableHandler * handler);
   gboolean siPsi_IsTable (uint8_t afFlags, siPsi_TableHandler * handler,
     uint16_t packetPID, const uint8_t * payloadData, uint8_t PUSI);
+  void siPsi_DisplayServiceList (siPsi_TableHandler * handler);
 
   struct _siPsi_ServiceList{
     uint16_t numberOfPrograms;

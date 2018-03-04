@@ -220,6 +220,7 @@ gst_leanTsChecker_sink_event (GstPad * pad, GstObject * parent,
       /* end-of-stream, we should close down all stream leftovers here */
       // TODO - Clean up, wash the pots and get ready to head back to the space ship
       ret = gst_pad_event_default (pad, parent, event);
+      TS_showPacketStats (leanTsChecker->pheaderAndPayloadStore);
       g_print (" <<<<<<< EOS leanTsCheck >>>>>>>> \n");
       break;
     default:
@@ -285,15 +286,7 @@ gst_my_filter_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
     // need to get a new handle to pass downstream modules in pipeline
     TS_pushDataIn (leanTsChecker->pheaderAndPayloadStore, buf, TRUE);
 
-    //bufferTosendOn = TS_getFreeDataToSendOn(leanTsChecker->pheaderAndPayloadStore);
-
-    //g_print ("######## ######Have data of size %" G_GSIZE_FORMAT " bytes!\n",
-    //    gst_buffer_get_size (buf));
-
     //gst_SendAStatusMessage (leanTsChecker);
-
-    //g_print ("Have data of size %" G_GSIZE_FORMAT " bytes!\n",
-    //    gst_buffer_get_size (bufferTosendOn));
   }
 
   return gst_pad_push (leanTsChecker->srcpad, bufferTosendOn);
@@ -384,6 +377,6 @@ plugin_init (GstPlugin * plugin)
 GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
     GST_VERSION_MINOR,
     leanTsChecker,
-    "Apply a blurring filter to an image",
+    "running basic checks on an Mpeg2 systems TS",
     plugin_init, VERSION, "LGPL", GST_PACKAGE_NAME, GST_PACKAGE_ORIGIN)
 //###############################################################################

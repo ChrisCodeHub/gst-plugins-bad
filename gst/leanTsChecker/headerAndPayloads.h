@@ -37,6 +37,7 @@
   void TS_levelParserDispose(headerAndPayloadStore* Store);
   void TS_pushDataIn(headerAndPayloadStore *store, GstBuffer *buf, gboolean checkSync);
   int TS_parseTsPacketHeader(headerAndPayloadStore *store);
+  void TS_showPacketStats(headerAndPayloadStore *store);
 
   struct _perPIDStatusInfo{
     uint16_t PID;

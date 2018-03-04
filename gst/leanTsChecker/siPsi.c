@@ -177,7 +177,7 @@ siPsi_StoreSectionSegment (siPsi_isKnownPID * progInfo,
 //## once the SDT is parsed, show the complete, aggregration of data
 // from PAT, PMT amd SDT
 void
-DisplayServiceList (siPsi_TableHandler * handler)
+siPsi_DisplayServiceList (siPsi_TableHandler * handler)
 {
   siPsi_ServiceList *serviceList = handler->serviceList;
   PMT_Streams *streamDefs;
@@ -265,7 +265,7 @@ SDTparse (const uint8_t * data, uint32_t dataLeft, siPsi_isKnownPID * progInfo,
   }
 
   // ignore CRC (4bytes)
-  DisplayServiceList (handler);
+  //siPsi_DisplayServiceList (handler);
   handler->SDTvalid = TRUE;
 }
 

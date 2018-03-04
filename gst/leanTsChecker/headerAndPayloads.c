@@ -34,9 +34,52 @@ typedef enum
 } ePacketErrorCodes;
 
 const uint32_t maxPIDsTracked = 128;
+const uint64_t multipler = (double) 8 * (double) 188 * (double) 27000000;
 
 //##############################################################################
-//  Infracstructure functions
+//  Infrastructure functions
+//##############################################################################
+
+//##############################################################################
+//## helper functions
+void
+resetPIDtrackingInfo (headerAndPayloadStore * store)
+{
+  for (uint32_t idx = 0; idx < maxPIDsTracked; idx++) {
+    store->pPIDStats[idx].haveSeenPCR = FALSE;
+    store->pPIDStats[idx].CCErrorsSoFar = 0;
+    store->pPIDStats[idx].packetsOnThisPID = 0;
+    store->pPIDStats[idx].haveSentDebug = FALSE;
+    store->pPIDStats[idx].bitrate = 0;
+    store->pPIDStats[idx].packetsSincePCR = 0;
+    store->pPIDStats[idx].isKnownPID = FALSE;
+  }
+}
+
+//##############################################################################
+//##
+
+void
+TS_showPacketStats (headerAndPayloadStore * store)
+{
+  uint32_t activeIndex;
+  uint32_t currentMaxFill = store->topOfPIDStore;
+  perPIDStatusInfo *pidInfo = &store->pPIDStats[0];
+
+  for (activeIndex = 0; activeIndex < currentMaxFill; activeIndex++) {
+    g_print (" PID 0x%x   bitrate %d   packtes %d  CCerr %d\n",
+        pidInfo->PID,
+        pidInfo->bitrate,
+        (uint32_t) pidInfo->packetsOnThisPID,
+        (uint32_t) pidInfo->CCErrorsSoFar);
+    pidInfo++;
+  }
+  siPsi_DisplayServiceList (store->pSiPsiParser);
+}
+
+
+//##############################################################################
+//##
 //##############################################################################
 
 //##############################################################################
@@ -61,12 +104,7 @@ TS_levelParserInit (void)
   store->pPIDStats = g_new (perPIDStatusInfo, maxPIDsTracked);
   store->pSiPsiParser = siPsi_ParserInit ();
 
-  for (uint32_t idx = 0; idx < maxPIDsTracked; idx++) {
-    store->pPIDStats[idx].haveSeenPCR = FALSE;
-    store->pPIDStats[idx].CCErrorsSoFar = 0;
-    store->pPIDStats[idx].packetsOnThisPID = 0;
-    store->pPIDStats[idx].haveSentDebug = FALSE;
-  }
+  resetPIDtrackingInfo (store);
 
   return (store);
 }
@@ -100,7 +138,6 @@ TS_parseTsPacketHeader (headerAndPayloadStore * store)
   // latch the Continuity count (CC from here on) check for cc errors
 
   while (store->adapterFillLevel >= 188) {
-    // get access to the data in the adapter store
     const guint8 *inputData = gst_adapter_map (store->adapter, 184);
 
     if (*inputData++ != 0x47) {
@@ -116,21 +153,19 @@ TS_parseTsPacketHeader (headerAndPayloadStore * store)
     uint8_t afFlags = *inputData & 0x30;
     inputData++;
 
-
     uint32_t activeIndex;
     uint32_t currentMaxFill = store->topOfPIDStore;
-
     for (activeIndex = 0; activeIndex < currentMaxFill; activeIndex++) {
       if (PID == store->pPIDStats[activeIndex].PID) {
         break;
       }
     }
 
+    perPIDStatusInfo *pidInfo;
     if (activeIndex == store->topOfPIDStore) {
       if (store->topOfPIDStore < maxPIDsTracked) {
-        store->pPIDStats[activeIndex].PID = PID;
-        store->pPIDStats[activeIndex].lastContinuityCount = CCcount;
-        store->pPIDStats[activeIndex].haveSeenPCR = FALSE;
+        pidInfo = &store->pPIDStats[activeIndex];
+        pidInfo->PID = PID;
         store->topOfPIDStore++;
       } else {
         g_print ("<><><> OUT OF BUFFERS IN TS_parseTsPacketHeader ><><><>\n");
@@ -138,29 +173,25 @@ TS_parseTsPacketHeader (headerAndPayloadStore * store)
       }
     } else {
       uint16_t expectedContiuityCount;
-      expectedContiuityCount =
-          store->pPIDStats[activeIndex].lastContinuityCount;
+      pidInfo = &store->pPIDStats[activeIndex];
+      expectedContiuityCount = pidInfo->lastContinuityCount;
       if ((afFlags & 0x30) != 0x30) {
         expectedContiuityCount = (expectedContiuityCount + 1) & 0xf;
         if (expectedContiuityCount != CCcount) {
-          store->pPIDStats[activeIndex].CCErrorsSoFar++;
+          pidInfo->CCErrorsSoFar++;
           //  g_print("<><><> CC ERROR on PID 0x%x ><><><>\n", store->pPIDStats[activeIndex].PID);
         }
       }
-      store->pPIDStats[activeIndex].lastContinuityCount = CCcount;
-      store->pPIDStats[activeIndex].packetsOnThisPID++;
     }
 
-    store->pPIDStats[activeIndex].packetsSincePCR++;
+    pidInfo->lastContinuityCount = CCcount;
+    pidInfo->packetsOnThisPID++;
+    pidInfo->packetsSincePCR++;
 
     isTable =
         siPsi_IsTable (afFlags, store->pSiPsiParser, PID, inputData, PUSI);
 
     if (isTable == FALSE) {
-      // adaptation field bits signify if there is payload only, padding or a
-      // mix of the two.  If top bit (of two bits) is set then we need to check
-      // what info is present
-
       if ((afFlags & 0x20) == 0x20) {
         uint8_t adaptationLength = *inputData++;
         if (adaptationLength != 0) {
@@ -181,41 +212,37 @@ TS_parseTsPacketHeader (headerAndPayloadStore * store)
             PCR_bottom9Bits = ((inputData[4] & 1) << 8) + (inputData[5]);
             fullPCR_27Mhz = (PCR_top33Bits * (double) 300) + PCR_bottom9Bits;
 
-            if (store->pPIDStats[activeIndex].haveSeenPCR == FALSE) {
-              store->pPIDStats[activeIndex].haveSeenPCR = TRUE;
-              store->pPIDStats[activeIndex].packetsSincePCR = 0;
+            if (pidInfo->haveSeenPCR == FALSE) {
+              pidInfo->haveSeenPCR = TRUE;
+              pidInfo->packetsSincePCR = 0;
             } else {
               // seen a PCR before so we can work out a bitrate -
               // bits/sec is (packets * 8 * 188)*27000000 / deltaPCR
               uint64_t deltaPCR;
               uint64_t packets;
               uint32_t bitrate;
-              uint64_t previousPCR =
-                  store->pPIDStats[activeIndex].lastPCR_value;
+              uint64_t previousPCR = pidInfo->lastPCR_value;
               if (previousPCR >= fullPCR_27Mhz) {
                 deltaPCR = (double) 0x1ffffffff - previousPCR;
                 deltaPCR = deltaPCR + fullPCR_27Mhz;
               } else {
                 deltaPCR = fullPCR_27Mhz - previousPCR;
               }
-
-              packets = store->pPIDStats[activeIndex].packetsSincePCR;
-              uint64_t multipler =
-                  (double) 8 * (double) 188 * (double) 27000000;
+              packets = pidInfo->packetsSincePCR;
               bitrate = (uint32_t) ((packets * multipler) / deltaPCR);
-              store->pPIDStats[activeIndex].bitrate = bitrate;
+              pidInfo->bitrate = bitrate;
 
-              //if (store->pPIDStats[activeIndex].haveSentDebug == FALSE) {
-              //  store->pPIDStats[activeIndex].haveSentDebug = TRUE;
+              //if (pidInfo->haveSentDebug == FALSE) {
+              //  pidInfo->haveSentDebug = TRUE;
               //  g_print (" PID 0x%x   bitrate %d   packtes %d  CCerr %d\n",
-              //      store->pPIDStats[activeIndex].PID,
-              //      store->pPIDStats[activeIndex].bitrate,
+              //      pidInfo->PID,
+              //      pidInfo->bitrate,
               //      (uint32_t) packets,
-              //      (uint32_t)store->pPIDStats[activeIndex].CCErrorsSoFar);
+              //      (uint32_t)pidInfo->CCErrorsSoFar);
               //}
             }
-            store->pPIDStats[activeIndex].lastPCR_value = fullPCR_27Mhz;
-            store->pPIDStats[activeIndex].packetsSincePCR = 0;
+            pidInfo->lastPCR_value = fullPCR_27Mhz;
+            pidInfo->packetsSincePCR = 0;
           }
         }
       }
