@@ -49,8 +49,9 @@
     uint64_t lastPCRPAcketNumber_thisPID;
     uint64_t lastPCRPAcketNumber_allTS;
     uint64_t packetsOnThisPID;
-    gboolean isKnownPID;
+    uint16_t *ServiceListByIndex;
     gboolean haveSeenPCR;
+    gboolean ServiceListFilledIn;
     gboolean haveSentDebug;
 
   };

@@ -71,6 +71,8 @@ typedef enum
   gboolean siPsi_IsTable (uint8_t afFlags, siPsi_TableHandler * handler,
     uint16_t packetPID, const uint8_t * payloadData, uint8_t PUSI);
   void siPsi_DisplayServiceList (siPsi_TableHandler * handler);
+  gboolean si_Psi_FindServicePIDsFromPCR(siPsi_TableHandler * handler,
+    const uint16_t pcrPID_toFind, uint16_t* PIDsInService);
 
   struct _siPsi_ServiceList{
     uint16_t numberOfPrograms;

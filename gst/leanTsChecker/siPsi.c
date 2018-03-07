@@ -117,6 +117,39 @@ siPsi_ParserDispose (siPsi_TableHandler * handler)
 //##############################################################################
 
 //##############################################################################
+//##
+gboolean
+si_Psi_FindServicePIDsFromPCR (siPsi_TableHandler * handler,
+    const uint16_t pcrPID_toFind, uint16_t * PIDsInService)
+{
+  if (handler->PMTsvalid == TRUE) {
+    const siPsi_ServiceList *serviceList = handler->serviceList;
+    const uint16_t readLimit = serviceList->numberOfPrograms;
+    uint16_t readptr = 0;
+
+    const ProgramDef *programDefiniton = &serviceList->programList[0];
+
+    for (readptr = 0; readptr < readLimit; readptr++) {
+      if (programDefiniton->pcrPID == pcrPID_toFind) {
+        uint16_t streamsToRead = programDefiniton->numberOfStreams;
+        PMT_Streams *streamDefs = programDefiniton->streamdef;
+        for (uint8_t idx = 0; idx < streamsToRead; idx++) {
+          if (pcrPID_toFind != streamDefs->streamPID) {
+            *PIDsInService++ = streamDefs->streamPID;
+          }
+          streamDefs++;
+        }
+        break;
+      }
+      programDefiniton++;
+    }
+  }
+  *PIDsInService = 0xffff;      // 0xffff acts as an end marker for the list
+  return handler->PMTsvalid;
+}
+
+
+//##############################################################################
 // called after seeing a new PAT, adds the PMT pids to the PIDs we are interested
 // in.  Since its a new PAT, we delete all previous PMTs
 
@@ -190,7 +223,7 @@ siPsi_DisplayServiceList (siPsi_TableHandler * handler)
 
     streamDefs = programDefiniton->streamdef;
     for (uint16_t cmp = 0; cmp < programDefiniton->numberOfStreams; cmp++) {
-      g_print (" type[%02d] 0x%4x", streamDefs->streamType,
+      g_print (" type[%02d] 0x%04x", streamDefs->streamType,
           streamDefs->streamPID);
       streamDefs++;
     }

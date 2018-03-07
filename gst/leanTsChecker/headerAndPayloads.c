@@ -52,7 +52,8 @@ resetPIDtrackingInfo (headerAndPayloadStore * store)
     store->pPIDStats[idx].haveSentDebug = FALSE;
     store->pPIDStats[idx].bitrate = 0;
     store->pPIDStats[idx].packetsSincePCR = 0;
-    store->pPIDStats[idx].isKnownPID = FALSE;
+    store->pPIDStats[idx].ServiceListFilledIn = FALSE;
+    store->pPIDStats[idx].ServiceListByIndex = g_malloc (16 * 16);
   }
 }
 
@@ -67,7 +68,7 @@ TS_showPacketStats (headerAndPayloadStore * store)
   perPIDStatusInfo *pidInfo = &store->pPIDStats[0];
 
   for (activeIndex = 0; activeIndex < currentMaxFill; activeIndex++) {
-    g_print (" PID 0x%x   bitrate %d   packtes %d  CCerr %d\n",
+    g_print (" PID 0x%04x   bitrate %8d   packets %8d  CCerr %d\n",
         pidInfo->PID,
         pidInfo->bitrate,
         (uint32_t) pidInfo->packetsOnThisPID,
@@ -117,9 +118,14 @@ void
 TS_levelParserDispose (headerAndPayloadStore * store)
 {
   g_print (" <<<<<< Diposed the TS_parserStage >>>>>> \n");
-  siPsi_ParserDispose (store->pSiPsiParser);
 
+  siPsi_ParserDispose (store->pSiPsiParser);
   g_object_unref (store->adapter);
+  for (uint32_t idx = 0; idx < maxPIDsTracked; idx++) {
+    if (store->pPIDStats[idx].ServiceListByIndex != NULL) {
+      g_free (store->pPIDStats[idx].ServiceListByIndex);
+    }
+  }
   g_free (store->pPIDStats);
   g_free (store);
 }
@@ -128,6 +134,82 @@ TS_levelParserDispose (headerAndPayloadStore * store)
 //####################### Process the data functions ###########################
 //##############################################################################
 
+//TODO
+// NOTE the PIDs to find contains the service cpmponents from the PMT.  it
+// list the PIDs that we should expect to see in the systems
+// pPIDStats[] is all the PIDs we've seen so far come in. - so its possible
+// that if we get the PMT early (say pkt[0] is PAT, pkt[1]..[x] PMTs!) then
+// it'll be in the PMT list, but not pPIDStats[] list.  IN this case add the
+// PID to the  pPIDStats[] list
+void
+findPIDsInStore (headerAndPayloadStore * store, uint16_t * PIDsToFind,
+    uint16_t * ServiceListByIndex)
+{
+  uint32_t activeIndex;
+  uint32_t currentMaxFill = store->topOfPIDStore;
+  uint16_t requiredPID;
+  uint16_t *debug_ServiceListByIndex = ServiceListByIndex;
+
+  while (*PIDsToFind != 0xffff) {
+    requiredPID = *PIDsToFind;
+    for (activeIndex = 0; activeIndex < currentMaxFill; activeIndex++) {
+      if (requiredPID == store->pPIDStats[activeIndex].PID) {
+        *ServiceListByIndex++ = activeIndex;
+        activeIndex = currentMaxFill;
+      }
+    }
+    PIDsToFind++;
+  }
+  *ServiceListByIndex = 0xffff; // end marker, cannot be valid INDEX
+}
+
+//##############################################################################
+//##
+void
+calculateBitrates (headerAndPayloadStore * store, perPIDStatusInfo * pidInfo,
+    uint64_t deltaPCR)
+{
+  uint64_t packets;
+  uint32_t bitrate;
+  uint16_t PIDsInService[16];
+  uint16_t *ServiceListByIndex;
+
+  packets = pidInfo->packetsSincePCR;
+  bitrate = (uint32_t) ((packets * multipler) / deltaPCR);
+  pidInfo->bitrate = bitrate;
+  pidInfo->packetsSincePCR = 0;
+  ServiceListByIndex = pidInfo->ServiceListByIndex;
+
+  if (pidInfo->ServiceListFilledIn == TRUE) {
+#if 1
+    while (*ServiceListByIndex != 0xffff) {
+      pidInfo = &store->pPIDStats[*ServiceListByIndex++];
+      packets = pidInfo->packetsSincePCR;
+      bitrate = (uint32_t) ((packets * multipler) / deltaPCR);
+      pidInfo->bitrate = bitrate;
+      pidInfo->packetsSincePCR = 0;
+    }
+#endif
+  } else {
+
+
+    // NOTE pidInfo->PID is the PID with a PCR on it for this service
+    // find the other components of the service to measure against
+
+    // to find the other compnents that are also measure against this PCR, eg the
+    // audio and data PIDs, iterate through the PMT maps if they exist
+    gboolean foundPMTYet = si_Psi_FindServicePIDsFromPCR (store->pSiPsiParser,
+        pidInfo->PID, PIDsInService);
+
+    if (foundPMTYet == TRUE) {
+      findPIDsInStore (store, PIDsInService, ServiceListByIndex);
+      pidInfo->ServiceListFilledIn = TRUE;
+    }
+  }
+}
+
+//##############################################################################
+//##
 int
 TS_parseTsPacketHeader (headerAndPayloadStore * store)
 {
@@ -219,8 +301,6 @@ TS_parseTsPacketHeader (headerAndPayloadStore * store)
               // seen a PCR before so we can work out a bitrate -
               // bits/sec is (packets * 8 * 188)*27000000 / deltaPCR
               uint64_t deltaPCR;
-              uint64_t packets;
-              uint32_t bitrate;
               uint64_t previousPCR = pidInfo->lastPCR_value;
               if (previousPCR >= fullPCR_27Mhz) {
                 deltaPCR = (double) 0x1ffffffff - previousPCR;
@@ -228,10 +308,7 @@ TS_parseTsPacketHeader (headerAndPayloadStore * store)
               } else {
                 deltaPCR = fullPCR_27Mhz - previousPCR;
               }
-              packets = pidInfo->packetsSincePCR;
-              bitrate = (uint32_t) ((packets * multipler) / deltaPCR);
-              pidInfo->bitrate = bitrate;
-
+              calculateBitrates (store, pidInfo, deltaPCR);
               //if (pidInfo->haveSentDebug == FALSE) {
               //  pidInfo->haveSentDebug = TRUE;
               //  g_print (" PID 0x%x   bitrate %d   packtes %d  CCerr %d\n",
@@ -242,7 +319,6 @@ TS_parseTsPacketHeader (headerAndPayloadStore * store)
               //}
             }
             pidInfo->lastPCR_value = fullPCR_27Mhz;
-            pidInfo->packetsSincePCR = 0;
           }
         }
       }
