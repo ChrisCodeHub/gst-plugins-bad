@@ -248,17 +248,17 @@ gst_my_filter_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
   GstleanTsChecker *leanTsChecker = GST_leanTsChecker (parent);
 
   // if this is the first buffer, latch the time NOTE - could be on state change?
-  if (leanTsChecker->totalCalls == 0) {
-    leanTsChecker->startTime = g_get_monotonic_time ();
-  } else {
-    int64_t nowTime = g_get_monotonic_time ();
-    uint32_t elapsedTime =
-        (uint32_t) ((nowTime - leanTsChecker->startTime) / 1000);
-    if (leanTsChecker->totalCalls == 1000) {
-      g_print (" @@@@@@ elapsed %u \n", elapsedTime);
-    }
+  // if (leanTsChecker->totalCalls == 0) {
+  //   leanTsChecker->startTime = g_get_monotonic_time ();
+  // } else {
+  //   int64_t nowTime = g_get_monotonic_time ();
+  //   uint32_t elapsedTime =
+  //       (uint32_t) ((nowTime - leanTsChecker->startTime) / 1000);
+  //   if (leanTsChecker->totalCalls == 1000) {
+  //     g_print (" @@@@@@ elapsed %u \n", elapsedTime);
+  //   }
+  // }
 
-  }
   bufferTosendOn = buf;
 
   if (!leanTsChecker->silent)
@@ -301,6 +301,7 @@ void
 gst_SendAStatusMessage (GstleanTsChecker * me)
 {
   GstStructure *s;
+  GstMessage *messageInABottle;
 
 //  s = gst_structure_new ("leanTsChecker",
 //      "above", G_TYPE_BOOLEAN, above,
@@ -310,7 +311,7 @@ gst_SendAStatusMessage (GstleanTsChecker * me)
   s = gst_structure_new ("leanTsChecker", "packetsParsed ", G_TYPE_UINT64,
       TotalPacketsParsed, NULL);
 
-  GstMessage *messageInABottle = gst_message_new_element (GST_OBJECT (me), s);
+  messageInABottle = gst_message_new_element (GST_OBJECT (me), s);
   gst_element_post_message (GST_ELEMENT (me), messageInABottle);
 
   g_print ("<><><><>< Pkts %d  <><><< \n", (int) TotalPacketsParsed);

@@ -44,6 +44,7 @@
     uint8_t  lastContinuityCount;
     uint32_t packetsSincePCR;
     uint32_t bitrate;
+    uint32_t debugCount;
     uint64_t CCErrorsSoFar;
     uint64_t lastPCR_value;
     uint64_t lastPCRPAcketNumber_thisPID;

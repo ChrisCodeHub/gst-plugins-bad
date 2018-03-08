@@ -22,6 +22,17 @@
 #include "siPsi.h"
 #include <string.h>
 
+void UpdateTrackedPIDs (siPsi_TableHandler * handler);
+void siPsi_StoreSectionSegment (siPsi_isKnownPID * progInfo,
+    const uint8_t * data, uint8_t BytesOfPayload, uint8_t trace);
+void SDTparse (const uint8_t * data, uint32_t dataLeft,
+    siPsi_isKnownPID * progInfo, siPsi_TableHandler * handler);
+void PMTparse (const uint8_t * data, uint32_t dataLeft,
+    siPsi_isKnownPID * progInfo, siPsi_TableHandler * handler);
+void PATparse (const uint8_t * data, uint32_t dataLeft,
+    siPsi_isKnownPID * progInfo, siPsi_TableHandler * handler);
+void sectionParse (const uint8_t * data, siPsi_isKnownPID * progInfo,
+    siPsi_TableHandler * handler);
 //##############################################################################
 //  Infrastructure functions
 //##############################################################################
@@ -32,6 +43,7 @@ siPsi_TableHandler *
 siPsi_ParserInit (void)
 {
   siPsi_TableHandler *handler;
+  uint8_t maxPrograms = 32;
   g_print (" <<<<<< Initialised a sipsi parser >>>>>> \n");
 
   handler = g_new (siPsi_TableHandler, 1);
@@ -40,15 +52,13 @@ siPsi_ParserInit (void)
   handler->PATvalid = FALSE;
   handler->PMTsvalid = FALSE;
   handler->SDTvalid = FALSE;
-
-
   handler->serviceList = g_new (siPsi_ServiceList, 1);
-  uint8_t maxPrograms = 32;
+
   handler->serviceList->maxNumberOfPrograms = maxPrograms;
   handler->serviceList->numberOfPrograms = 0;
   handler->serviceList->programList = g_new (ProgramDef, maxPrograms);
   for (uint32_t i = 0; i < handler->serviceList->maxNumberOfPrograms; i++) {
-    uint8_t maxStreams = 12;
+    uint8_t maxStreams = 24;
     handler->serviceList->programList[i].serviceName = g_malloc (100);
     handler->serviceList->programList[i].serviceName[0] = '\0';
     handler->serviceList->programList[i].maxNumberOfStreams = maxStreams;
@@ -57,12 +67,11 @@ siPsi_ParserInit (void)
         g_new (PMT_Streams, maxStreams);
   }
 
-  handler->trackedPIDsMax = 256;
+  handler->trackedPIDsMax = 64;
   handler->trackedPIDs = g_new (siPsi_isKnownPID, handler->trackedPIDsMax);
 
   for (uint16_t x = 0; x < handler->trackedPIDsMax; x++) {
     handler->trackedPIDs[x].tableBody = NULL;
-    handler->trackedPIDs[x].TableInfo = NULL;
   }
 
   handler->trackedPIDs[0].PID = 0x00;   // start with the PAT
@@ -75,9 +84,8 @@ siPsi_ParserInit (void)
   for (uint16_t idx = 0; idx < handler->trackedPIDsLength; idx++) {
     handler->trackedPIDs[idx].parserState = WAITNG_FOR_START;
     handler->trackedPIDs[idx].version_number = 0xff;
-    handler->trackedPIDs[idx].tableBody = g_malloc (1024);
+    handler->trackedPIDs[idx].tableBody = g_malloc (1128);
     handler->trackedPIDs[idx].CurrentLength = 0;
-    handler->trackedPIDs[idx].TableInfo = NULL;
   }
   handler->shownDebug = 0;
   return (handler);
@@ -97,18 +105,17 @@ siPsi_ParserDispose (siPsi_TableHandler * handler)
     g_free (handler->serviceList->programList[i].serviceName);
     g_free (handler->serviceList->programList[i].streamdef);
   }
-  g_free (handler->serviceList->programList);
-  g_free (handler->serviceList);
+  if (handler->serviceList->programList != NULL)
+    g_free (handler->serviceList->programList);
+  if (handler->serviceList != NULL)
+    g_free (handler->serviceList);
 
-  for (uint32_t idx = 0; idx < handler->trackedPIDsLength; idx++) {
+  for (uint32_t idx = 0; idx < handler->trackedPIDsMax; idx++) {
     if (handler->trackedPIDs[idx].tableBody != NULL)
       g_free (handler->trackedPIDs[idx].tableBody);
-    if (handler->trackedPIDs[idx].TableInfo != NULL) {
-      g_free (handler->trackedPIDs[idx].TableInfo);
-    }
   }
-  g_free (handler->trackedPIDs);
 
+  g_free (handler->trackedPIDs);
   g_free (handler);
 }
 
@@ -172,22 +179,23 @@ UpdateTrackedPIDs (siPsi_TableHandler * handler)
     progInfo->CurrentLength = 0;
     progInfo++;
   }
+
   handler->numberOfPMTsFound = 0;
   handler->numberOfPMTsToFind = numberOfPMTsToFind;
   handler->PATvalid = TRUE;
   handler->PMTsvalid = FALSE;
   handler->SDTvalid = FALSE;
 
-  // if(handler->shownDebug == 0)
-  // {
-  //   g_print(" ~~~~~~~~~~~~~~~~~~~~ PAT listigs ~~~~~~~~~~~~~~~~~~~~~~~ \n");
-  //   handler->shownDebug = 1;
-  //   for (index = handler->fixedPIDs; index <   handler->trackedPIDsLength; index++){
-  //     g_print(" 0x%x     0x%x    %d\n", handler->trackedPIDs[index].programNumber,
-  //                                       handler->trackedPIDs[index].PID,
-  //                                       handler->trackedPIDs[index].TableType);
-  // }
-
+  if (handler->shownDebug == 1) {
+    g_print (" ~~~~~~~~~~~~~~~~~~~~ PAT listings ~~~~~~~~~~~~~~~~~~~~~~~ \n");
+    for (index = handler->fixedPIDs; index < handler->trackedPIDsLength;
+        index++) {
+      g_print ("Prog# 0x%x  PID 0x%04x  Type %d\n",
+          handler->trackedPIDs[index].programNumber,
+          handler->trackedPIDs[index].PID,
+          handler->trackedPIDs[index].TableType);
+    }
+  }
 }
 
 //###############################################################data###############
@@ -197,7 +205,12 @@ siPsi_StoreSectionSegment (siPsi_isKnownPID * progInfo,
     const uint8_t * data, uint8_t BytesOfPayload, uint8_t trace)
 {
   uint16_t CurrentLength = progInfo->CurrentLength;
-  uint8_t *storeAddress = progInfo->tableBody;
+  uint8_t *storeAddress;
+
+  if (progInfo->tableBody == NULL) {
+    progInfo->tableBody = g_malloc (1128);
+  }
+  storeAddress = progInfo->tableBody;
   storeAddress += (CurrentLength);
   memcpy (storeAddress, data, BytesOfPayload);
   CurrentLength += BytesOfPayload;
@@ -216,6 +229,7 @@ siPsi_DisplayServiceList (siPsi_TableHandler * handler)
   PMT_Streams *streamDefs;
   uint16_t programsInList = serviceList->numberOfPrograms;
 
+  g_print ("\n ~~~~~~~~~~~~~~~~~~~~ SDT listings ~~~~~~~~~~~~~~~~~~~~~~~ \n");
   for (uint8_t idx = 0; idx < programsInList; idx++) {
     ProgramDef *programDefiniton = &serviceList->programList[idx];
     g_print ("Program[%02d]: pcr 0x%04x", programDefiniton->programNumber,
@@ -234,20 +248,26 @@ siPsi_DisplayServiceList (siPsi_TableHandler * handler)
 }
 
 
+//#############################################################################
+//##
 void
 SDTparse (const uint8_t * data, uint32_t dataLeft, siPsi_isKnownPID * progInfo,
     siPsi_TableHandler * handler)
 {
   uint16_t serviceID;
   uint16_t desriptorLength;
+  uint16_t programsInList;
   gboolean foundServiceIDinPMT = FALSE;
+  char *serviceNameString;
+
+  siPsi_ServiceList *serviceList = handler->serviceList;
+  programsInList = serviceList->numberOfPrograms;
+
+  g_print (" In SDT <><><><><><>< \n");
+
   // skip original_network_id (16 uimsbf) and reserved_future_use (8 bslbf)
   data += 3;
   dataLeft -= 3;
-
-  siPsi_ServiceList *serviceList = handler->serviceList;
-  uint16_t programsInList = serviceList->numberOfPrograms;
-  char *serviceNameString;
 
   while (dataLeft > 4) {
     serviceID = (GST_READ_UINT16_BE (data));
@@ -282,10 +302,14 @@ SDTparse (const uint8_t * data, uint32_t dataLeft, siPsi_isKnownPID * progInfo,
         uint8_t descTag = *dscrData++;
         uint8_t length = *dscrData++;
         if (descTag == 0x48) {
+          uint8_t serviceProviderNameLength;
+          uint8_t serviceNameLength;
+          g_print (" In desctag 48 <><><><><><>< \n");
           dscrData++;           // skip service type
-          uint8_t serviceProviderNameLength = *dscrData++;
+          serviceProviderNameLength = *dscrData++;
           dscrData += serviceProviderNameLength;
-          uint8_t serviceNameLength = *dscrData++;;
+          serviceNameLength = *dscrData++;
+          g_print (" serviceNameLength %d <><><><><><>< \n", serviceNameLength);
           memcpy (serviceNameString, dscrData, serviceNameLength);
           serviceNameString[serviceNameLength] = '\0';
         }
@@ -298,7 +322,9 @@ SDTparse (const uint8_t * data, uint32_t dataLeft, siPsi_isKnownPID * progInfo,
   }
 
   // ignore CRC (4bytes)
-  //siPsi_DisplayServiceList (handler);
+  if (handler->shownDebug == 1) {
+    siPsi_DisplayServiceList (handler);
+  }
   handler->SDTvalid = TRUE;
 }
 
@@ -310,24 +336,33 @@ PMTparse (const uint8_t * data, uint32_t dataLeft, siPsi_isKnownPID * progInfo,
     siPsi_TableHandler * handler)
 {
   gboolean showDebug = FALSE;
-  uint16_t pcrPID = (GST_READ_UINT16_BE (data)) & 0x1fff;
+  uint16_t pcrPID;
+  uint16_t programInfoLength;
+  uint16_t wrPtr;
+  uint16_t maxStreams;
+  uint16_t esInfoLength;
+  siPsi_ServiceList *serviceList;
+  ProgramDef *programDefiniton;
+  PMT_Streams *streamDefs;
+
+  pcrPID = (GST_READ_UINT16_BE (data)) & 0x1fff;
   data += 2;
   dataLeft -= 2;
 
-  uint16_t programInfoLength = (GST_READ_UINT16_BE (data)) & 0x0fff;
+  programInfoLength = (GST_READ_UINT16_BE (data)) & 0x0fff;
   data += 2;
   dataLeft -= 2;
 
   data += programInfoLength;
   dataLeft -= programInfoLength;
 
-  siPsi_ServiceList *serviceList = handler->serviceList;
-  uint16_t wrPtr = serviceList->numberOfPrograms;
+  serviceList = handler->serviceList;
+  wrPtr = serviceList->numberOfPrograms;
 
-  ProgramDef *programDefiniton = &serviceList->programList[wrPtr];
-  uint16_t maxStreams = programDefiniton->maxNumberOfStreams;
+  programDefiniton = &serviceList->programList[wrPtr];
+  maxStreams = programDefiniton->maxNumberOfStreams;
   programDefiniton->numberOfStreams = 0;
-  PMT_Streams *streamDefs = programDefiniton->streamdef;
+  streamDefs = programDefiniton->streamdef;
 
   programDefiniton->pcrPID = pcrPID;
   programDefiniton->programNumber = progInfo->programNumber;
@@ -342,7 +377,7 @@ PMTparse (const uint8_t * data, uint32_t dataLeft, siPsi_isKnownPID * progInfo,
       programDefiniton->numberOfStreams++;
     }
 
-    uint16_t esInfoLength = (GST_READ_UINT16_BE (data)) & 0x0fff;
+    esInfoLength = (GST_READ_UINT16_BE (data)) & 0x0fff;
     data += 2;
     dataLeft -= 2;
     // skip additional descriptors for now
@@ -414,11 +449,17 @@ sectionParse (const uint8_t * data, siPsi_isKnownPID * progInfo,
   uint8_t currentNext;
   uint8_t versionNumber, previousVersionNumber;
   uint16_t dataLeft = progInfo->section_length;
-
+  uint16_t transport_stream_id;
   // for SDT, THIS streams SDT is table_id 0x42 (DVB Blue book)
   // ignore this section if SDT and for a different TS
 
   if ((progInfo->TableType != SDT_TABLE) || (progInfo->table_id == 0x42)) {
+
+
+    if (progInfo->TableType == SDT_TABLE) {
+      transport_stream_id = GST_READ_UINT16_BE (data);
+      g_print (" SDT - T_ID %d, 0x%x", transport_stream_id, progInfo->table_id);
+    }
 
     data += 2;                  // skip transport_stream_id
     dataLeft -= 2;
@@ -472,8 +513,8 @@ siPsi_IsTable (uint8_t afFlags, siPsi_TableHandler * handler,
 
   for (uint16_t x = 0; x < trackedPIDsLength; x++) {
     if (packetPID == handler->trackedPIDs[x].PID) {
-      match = TRUE;
       siPsi_isKnownPID *progInfo = &handler->trackedPIDs[x];
+      match = TRUE;
       if (progInfo->parserState == WAITNG_FOR_START) {
         // step 1: we have a TS packet with some payload data, first need to
         // make sure we have collected a full table (they span multiple TS packets)
@@ -498,8 +539,9 @@ siPsi_IsTable (uint8_t afFlags, siPsi_TableHandler * handler,
           // we can move on to parsing
 
           if (BytesOfPayload >= 3) {
+            uint16_t section_length;
             progInfo->table_id = *payloadData++;
-            uint16_t section_length = GST_READ_UINT16_BE (payloadData);
+            section_length = GST_READ_UINT16_BE (payloadData);
             progInfo->section_length = section_length & 0x0fff;
             payloadData += 2;
             BytesOfPayload -= 3;
@@ -521,13 +563,15 @@ siPsi_IsTable (uint8_t afFlags, siPsi_TableHandler * handler,
           }
         }
       } else if (progInfo->parserState == COLLATING_PIECES) {
+        uint16_t CurrentLength;
         siPsi_StoreSectionSegment (progInfo, payloadData, BytesOfPayload, 3);
-        uint16_t CurrentLength = progInfo->CurrentLength;
+        CurrentLength = progInfo->CurrentLength;
 
         if (CurrentLength >= 3) {
+          uint16_t section_length;
           const uint8_t *storedPayload = &progInfo->tableBody[0];
           progInfo->table_id = *storedPayload++;
-          uint16_t section_length = GST_READ_UINT16_BE (storedPayload);
+          section_length = GST_READ_UINT16_BE (storedPayload);
           progInfo->section_length = section_length & 0x0fff;
           storedPayload += 2;
           CurrentLength -= 3;

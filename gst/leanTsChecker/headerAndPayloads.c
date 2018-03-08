@@ -50,6 +50,7 @@ resetPIDtrackingInfo (headerAndPayloadStore * store)
     store->pPIDStats[idx].CCErrorsSoFar = 0;
     store->pPIDStats[idx].packetsOnThisPID = 0;
     store->pPIDStats[idx].haveSentDebug = FALSE;
+    store->pPIDStats[idx].debugCount = 0;
     store->pPIDStats[idx].bitrate = 0;
     store->pPIDStats[idx].packetsSincePCR = 0;
     store->pPIDStats[idx].ServiceListFilledIn = FALSE;
@@ -178,10 +179,27 @@ calculateBitrates (headerAndPayloadStore * store, perPIDStatusInfo * pidInfo,
   bitrate = (uint32_t) ((packets * multipler) / deltaPCR);
   pidInfo->bitrate = bitrate;
   pidInfo->packetsSincePCR = 0;
+
+  //{
+  //  static uint32_t count = 0;
+  //  if(pidInfo->debugCount++ == 100)
+  //  {
+  //    pidInfo->debugCount = 0;
+  //    if (pidInfo->haveSentDebug == FALSE) {
+  //pidInfo->haveSentDebug = TRUE;
+  //      g_print (" PID 0x%x   bitrate %d   packtes %d  CCerr %d\n",
+  //          pidInfo->PID,
+  //          pidInfo->bitrate,
+  //          (uint32_t) packets,
+  //          (uint32_t)pidInfo->CCErrorsSoFar);
+  //    }
+  //  }
+  //}
+
+#if 0
   ServiceListByIndex = pidInfo->ServiceListByIndex;
 
   if (pidInfo->ServiceListFilledIn == TRUE) {
-#if 1
     while (*ServiceListByIndex != 0xffff) {
       pidInfo = &store->pPIDStats[*ServiceListByIndex++];
       packets = pidInfo->packetsSincePCR;
@@ -189,7 +207,6 @@ calculateBitrates (headerAndPayloadStore * store, perPIDStatusInfo * pidInfo,
       pidInfo->bitrate = bitrate;
       pidInfo->packetsSincePCR = 0;
     }
-#endif
   } else {
 
 
@@ -206,6 +223,7 @@ calculateBitrates (headerAndPayloadStore * store, perPIDStatusInfo * pidInfo,
       pidInfo->ServiceListFilledIn = TRUE;
     }
   }
+#endif
 }
 
 //##############################################################################
@@ -220,7 +238,7 @@ TS_parseTsPacketHeader (headerAndPayloadStore * store)
   // latch the Continuity count (CC from here on) check for cc errors
 
   while (store->adapterFillLevel >= 188) {
-    const guint8 *inputData = gst_adapter_map (store->adapter, 184);
+    const guint8 *inputData = gst_adapter_map (store->adapter, 188);
 
     if (*inputData++ != 0x47) {
       g_print ("\n\n ############   LOST SYNC ################### \n\n");
@@ -273,26 +291,23 @@ TS_parseTsPacketHeader (headerAndPayloadStore * store)
     isTable =
         siPsi_IsTable (afFlags, store->pSiPsiParser, PID, inputData, PUSI);
 
+
     if (isTable == FALSE) {
       if ((afFlags & 0x20) == 0x20) {
         uint8_t adaptationLength = *inputData++;
         if (adaptationLength != 0) {
           uint8_t pcrFlag = (*inputData++) & 0x10;
           if (pcrFlag) {
-            uint64_t PCR_top33Bits;
-            uint32_t PCR_bottom9Bits;
-            uint64_t fullPCR_27Mhz;
-            PCR_top33Bits = (inputData[0] << 25) +
-                (inputData[1] << 17) +
-                (inputData[2] << 9) +
-                (inputData[3] << 1) + ((inputData[4] >> 7) & 1);
+            uint32_t PCR_top32Bits = (inputData[0] << 24) +
+                (inputData[1] << 16) +
+                (inputData[2] << 8) + (inputData[3] << 0);
 
-            PCR_top33Bits = (inputData[0] << 24) + (inputData[1] << 16) +
-                (inputData[2] << 8) + (inputData[3]);
-            PCR_top33Bits *= (double) 2;
-            PCR_top33Bits += ((inputData[4] >> 7) & 1);
-            PCR_bottom9Bits = ((inputData[4] & 1) << 8) + (inputData[5]);
-            fullPCR_27Mhz = (PCR_top33Bits * (double) 300) + PCR_bottom9Bits;
+            uint32_t PCR_lsb = ((inputData[4] >> 7) & 1);
+            uint64_t PCR_top33Bits = (PCR_top32Bits * (double) 2) + PCR_lsb;
+            uint32_t PCR_bottom9Bits =
+                ((inputData[4] & 1) << 8) + (inputData[5]);
+            uint64_t fullPCR_27Mhz =
+                (PCR_top33Bits * (double) 300) + PCR_bottom9Bits;
 
             if (pidInfo->haveSeenPCR == FALSE) {
               pidInfo->haveSeenPCR = TRUE;
