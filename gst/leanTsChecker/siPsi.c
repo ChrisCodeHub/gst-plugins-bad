@@ -263,8 +263,6 @@ SDTparse (const uint8_t * data, uint32_t dataLeft, siPsi_isKnownPID * progInfo,
   siPsi_ServiceList *serviceList = handler->serviceList;
   programsInList = serviceList->numberOfPrograms;
 
-  g_print (" In SDT <><><><><><>< \n");
-
   // skip original_network_id (16 uimsbf) and reserved_future_use (8 bslbf)
   data += 3;
   dataLeft -= 3;
@@ -293,27 +291,28 @@ SDTparse (const uint8_t * data, uint32_t dataLeft, siPsi_isKnownPID * progInfo,
       }
     }
 
-    // descriptors if have PMT slot to put them in
+    const uint8_t *dscrData;
+    uint8_t descTag;
+    uint8_t length;
+    // descriptor parsng if we have a PMT slot to put them in
     if (foundServiceIDinPMT == TRUE) {
       const uint8_t *localData = data;
       int16_t bytesleft = desriptorLength;
       while (bytesleft > 0) {
-        const uint8_t *dscrData = localData;
-        uint8_t descTag = *dscrData++;
-        uint8_t length = *dscrData++;
+        dscrData = localData;
+        descTag = *dscrData++;
+        length = *dscrData++;
         if (descTag == 0x48) {
           uint8_t serviceProviderNameLength;
           uint8_t serviceNameLength;
-          g_print (" In desctag 48 <><><><><><>< \n");
           dscrData++;           // skip service type
           serviceProviderNameLength = *dscrData++;
           dscrData += serviceProviderNameLength;
           serviceNameLength = *dscrData++;
-          g_print (" serviceNameLength %d <><><><><><>< \n", serviceNameLength);
           memcpy (serviceNameString, dscrData, serviceNameLength);
           serviceNameString[serviceNameLength] = '\0';
         }
-        localData += length;
+        localData += length + 2;
         bytesleft -= (length + 2);
       }
     }
@@ -449,17 +448,11 @@ sectionParse (const uint8_t * data, siPsi_isKnownPID * progInfo,
   uint8_t currentNext;
   uint8_t versionNumber, previousVersionNumber;
   uint16_t dataLeft = progInfo->section_length;
-  uint16_t transport_stream_id;
+
   // for SDT, THIS streams SDT is table_id 0x42 (DVB Blue book)
   // ignore this section if SDT and for a different TS
 
   if ((progInfo->TableType != SDT_TABLE) || (progInfo->table_id == 0x42)) {
-
-
-    if (progInfo->TableType == SDT_TABLE) {
-      transport_stream_id = GST_READ_UINT16_BE (data);
-      g_print (" SDT - T_ID %d, 0x%x", transport_stream_id, progInfo->table_id);
-    }
 
     data += 2;                  // skip transport_stream_id
     dataLeft -= 2;

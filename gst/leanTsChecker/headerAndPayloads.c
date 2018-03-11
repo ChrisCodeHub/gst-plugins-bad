@@ -275,12 +275,12 @@ TS_parseTsPacketHeader (headerAndPayloadStore * store)
       uint16_t expectedContiuityCount;
       pidInfo = &store->pPIDStats[activeIndex];
       expectedContiuityCount = pidInfo->lastContinuityCount;
-      if ((afFlags & 0x30) != 0x30) {
+      if ((afFlags & 0x10) == 0x10) {
         expectedContiuityCount = (expectedContiuityCount + 1) & 0xf;
-        if (expectedContiuityCount != CCcount) {
-          pidInfo->CCErrorsSoFar++;
-          //  g_print("<><><> CC ERROR on PID 0x%x ><><><>\n", store->pPIDStats[activeIndex].PID);
-        }
+      }
+      if (expectedContiuityCount != CCcount) {
+        pidInfo->CCErrorsSoFar++;
+        //  g_print("<><><> CC ERROR on PID 0x%x ><><><>\n", store->pPIDStats[activeIndex].PID);
       }
     }
 
